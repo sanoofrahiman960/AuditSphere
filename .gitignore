@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+backend/venv/
+backend/db.sqlite3
+backend/private_media/
+backend/staticfiles/
+backend/.env
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/coverage/
+# Compose
+.env
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

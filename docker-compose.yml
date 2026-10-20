@@ -1,0 +1,101 @@
+# Optional containerised deployment: PostgreSQL + Redis + Django (gunicorn) + Celery worker/beat + nginx SPA.
+#   cp .env.compose.example .env   # then edit secrets
+#   docker compose up -d --build
+#   docker compose exec backend python manage.py create_organization --name "Acme" --admin-email admin@acme.com --with-departments
+# The app is served on http://localhost:${HTTP_PORT:-8080}. Put a TLS-terminating proxy in front for production.
+
+x-backend-env: &backend-env
+  DJANGO_DEBUG: "false"
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+  DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost:8080}
+  SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-false}
+  TRUST_X_FORWARDED_FOR: "true"
+  DATABASE_URL: postgres://${POSTGRES_USER:-auditsphere}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-auditsphere}
+  CELERY_BROKER_URL: redis://redis:6379/0
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+  CORS_ALLOWED_ORIGINS: ${FRONTEND_URL:-http://localhost:8080}
+  MEDIA_ROOT: /app/private_media
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_PORT: ${EMAIL_PORT:-587}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-AuditSphere <no-reply@example.com>}
+  LOG_FORMAT: json
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  AI_ENABLED: ${AI_ENABLED:-false}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-auditsphere}
+      POSTGRES_USER: ${POSTGRES_USER:-auditsphere}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        INSTALL_OPTIONAL: ${INSTALL_OPTIONAL:-false}
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - media:/app/private_media
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["celery", "-A", "config", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment: *backend-env
+    volumes:
+      - media:/app/private_media
+    healthcheck:
+      disable: true
+    depends_on:
+      backend: { condition: service_healthy }
+
+  beat:
+    build: ./backend
+    restart: unless-stopped
+    command: ["celery", "-A", "config", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    environment: *backend-env
+    healthcheck:
+      disable: true
+    depends_on:
+      backend: { condition: service_healthy }
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      backend: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  media:

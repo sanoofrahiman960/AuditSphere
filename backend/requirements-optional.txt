@@ -1,0 +1,7 @@
+# Object storage for evidence (S3 or compatible)
+django-storages[s3]>=1.14,<2
+# AI / RAG module
+qdrant-client>=1.9,<2
+pypdf>=4.2,<6
+anthropic>=0.40
+httpx>=0.27
